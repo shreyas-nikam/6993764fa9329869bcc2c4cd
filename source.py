@@ -9,9 +9,6 @@ from sklearn.preprocessing import LabelEncoder
 
 import io
 import base64
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
 import warnings
 
 # Suppress XGBoost warning about use_label_encoder
@@ -525,7 +522,7 @@ def plot_lipschitz_sensitivity(sensitivity_df: pd.DataFrame, proxy_features: lis
 
 # --- 6. Adversarial Debiasing (Conceptual) Functions ---
 
-class AdversarialDebiaser(nn.Module):
+class AdversarialDebiaser:
     """
     Conceptual adversarial debiasing architecture.
     This class defines the network structure but does not implement the training loop.
@@ -541,38 +538,41 @@ class AdversarialDebiaser(nn.Module):
     """
 
     def __init__(self, n_features: int, hidden_dim: int = 64):
-        super().__init__()
+        self.n_features = n_features
+        self.hidden_dim = hidden_dim
+        self.encoder_layers = [
+            f"Linear(in_features={n_features}, out_features={hidden_dim})",
+            "ReLU()",
+            f"Linear(in_features={hidden_dim}, out_features={hidden_dim // 2})",
+            "ReLU()"
+        ]
+        self.predictor_layers = [
+            f"Linear(in_features={hidden_dim // 2}, out_features=1)",
+            "Sigmoid()"
+        ]
+        self.adversary_layers = [
+            f"Linear(in_features={hidden_dim // 2}, out_features=1)",
+            "Sigmoid()"
+        ]
 
-        # Shared representation (Encoder)
-        self.encoder = nn.Sequential(
-            nn.Linear(n_features, hidden_dim),
-            nn.ReLU(),
-            nn.Linear(hidden_dim, hidden_dim // 2),
-            nn.ReLU(),
+    def __str__(self):
+        return (
+            f"AdversarialDebiaser(\n"
+            f"  (encoder): Sequential(\n"
+            f"    {chr(10).join('    ' + layer for layer in self.encoder_layers)}\n"
+            f"  )\n"
+            f"  (predictor): Sequential(\n"
+            f"    {chr(10).join('    ' + layer for layer in self.predictor_layers)}\n"
+            f"  )\n"
+            f"  (adversary): Sequential(\n"
+            f"    {chr(10).join('    ' + layer for layer in self.adversary_layers)}\n"
+            f"  )\n"
+            f"  (grl): GradientReversalLayer()\n"
+            f")"
         )
 
-        # Predictor head (credit default)
-        self.predictor = nn.Sequential(
-            nn.Linear(hidden_dim // 2, 1),
-            nn.Sigmoid()
-        )
-
-        # Adversary head (protected attribute prediction, e.g., ZIP code group)
-        self.adversary = nn.Sequential(
-            nn.Linear(hidden_dim // 2, 1),
-            nn.Sigmoid()
-        )
-
-        # Conceptual GRL, in reality a custom autograd function.
-        self.grl = lambda x: x
-
-    def forward(self, x):
-        representation = self.encoder(x)
-        prediction = self.predictor(representation)
-        # .detach() is for conceptual separation in forward pass, GRL handles backward gradient reversal
-        adversary_pred = self.adversary(self.grl(representation.detach()))
-
-        return prediction, adversary_pred, representation
+    def __repr__(self):
+        return self.__str__()
 
 
 def display_adversarial_debiasing_concept(feature_cols: list):
@@ -606,14 +606,12 @@ def display_adversarial_debiasing_concept(feature_cols: list):
     print("Model Architecture:")
     print(conceptual_debiaser_model)
 
-    dummy_input = torch.randn(1, n_model_features)
-    pred, adv_pred, rep = conceptual_debiaser_model(dummy_input)
-
-    print(f"\nConceptual forward pass output for a dummy input:")
-    print(f"  Predictor Output (Credit Probability): {pred.item():.4f}")
+    print(f"\nConceptual architecture components:")
+    print(f"  Input: {n_model_features} features")
     print(
-        f"  Adversary Output (Protected Attribute Probability): {adv_pred.item():.4f}")
-    print(f"  Learned Representation shape: {rep.shape}")
+        f"  Encoder output: {hidden_layer_dim // 2} dimensional representation")
+    print(f"  Predictor output: 1 value (credit default probability)")
+    print(f"  Adversary output: 1 value (protected attribute probability)")
 
     print("\nAdversarial debiasing trains two competing objectives:")
     print("  Predictor: minimize credit default prediction error")

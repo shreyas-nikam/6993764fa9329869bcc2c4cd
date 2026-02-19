@@ -11,5 +11,4 @@ requests
 xgboost
 shap
 fairlearn
-torch
 streamlit-mermaid
