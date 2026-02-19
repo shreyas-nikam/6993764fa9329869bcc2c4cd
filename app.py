@@ -6,45 +6,117 @@ import seaborn as sns
 import shap
 import io
 import base64
-from source import *
+import streamlit_mermaid as stmd
 
-st.set_page_config(page_title="QuLab: Lab 42: Adversarial Example", layout="wide")
+st.set_page_config(
+    page_title="QuLab: Lab 42: Adversarial Example", layout="wide")
 st.sidebar.image("https://www.quantuniversity.com/assets/img/logo5.jpg")
 st.sidebar.divider()
 st.title("QuLab: Lab 42: Adversarial Example")
 st.divider()
 
+# --- Cached Data and Model Loading ---
+
+
+@st.cache_resource(show_spinner="Loading model and data...")
+def load_data_and_model():
+    """Load and cache the data and trained model from source.py"""
+    from source import (
+        prepare_credit_data, train_credit_scoring_model,
+        construct_twin_pairs, detect_individual_violations,
+        decompose_twin_difference, lipschitz_fairness,
+        topic2_synthesis_report, AdversarialDebiaser,
+        N_SAMPLES, RANDOM_SEED
+    )
+
+    # Prepare data
+    (df, X_train, X_test, y_train, y_test,
+     feature_cols, financial_features, proxy_features, le_home_ownership
+     ) = prepare_credit_data(n_samples=N_SAMPLES, random_state=RANDOM_SEED)
+
+    # Train model
+    model, model_predict_proba = train_credit_scoring_model(
+        X_train, y_train, random_state=RANDOM_SEED
+    )
+
+    # Conceptual group fairness metrics
+    conceptual_group_metrics = {
+        'dir': 0.82,
+        'four_fifths_rule_pass': True,
+        'proxies_detected': 3
+    }
+    conceptual_mitigation_results = {
+        'strategy_applied': 'Reweighting + Fairness Constraints (Conceptual)',
+        'post_mitigation_dir': 0.88,
+        'auc_cost': -0.015
+    }
+
+    return {
+        'model': model,
+        'X_test': X_test,
+        'y_test': y_test,
+        'feature_cols': feature_cols,
+        'financial_features': financial_features,
+        'proxy_features': proxy_features,
+        'model_predict_proba': model_predict_proba,
+        'conceptual_group_metrics': conceptual_group_metrics,
+        'conceptual_mitigation_results': conceptual_mitigation_results,
+        'functions': {
+            'construct_twin_pairs': construct_twin_pairs,
+            'detect_individual_violations': detect_individual_violations,
+            'decompose_twin_difference': decompose_twin_difference,
+            'lipschitz_fairness': lipschitz_fairness,
+            'topic2_synthesis_report': topic2_synthesis_report,
+            'AdversarialDebiaser': AdversarialDebiaser
+        }
+    }
+
+
+# Load cached data and model
+cached_data = load_data_and_model()
+
 # --- Session State Initialization ---
 if 'initialized' not in st.session_state:
     st.session_state.initialized = True
-    st.session_state.model = model # Pre-trained model
-    st.session_state.X_test = X_test # Test dataset
-    st.session_state.y_test = y_test # Test target variable
-    st.session_state.financial_features = financial_features # List of financial features
-    st.session_state.proxy_features_initial = proxy_features # Initial list of proxy features from source.py
-    st.session_state.feature_cols = feature_cols # All features used by the model
-    st.session_state.model_predict_proba = model_predict_proba # Model's predict_proba function
+    st.session_state.model = cached_data['model']
+    st.session_state.X_test = cached_data['X_test']
+    st.session_state.y_test = cached_data['y_test']
+    st.session_state.financial_features = cached_data['financial_features']
+    st.session_state.proxy_features_initial = cached_data['proxy_features']
+    st.session_state.feature_cols = cached_data['feature_cols']
+    st.session_state.model_predict_proba = cached_data['model_predict_proba']
 
     # User-configurable parameters (with defaults)
     st.session_state.n_audit_pairs = 100
     st.session_state.materiality_threshold = 0.10
-    st.session_state.selected_proxy_features = proxy_features # Default to initial proxy features, user can change
+    st.session_state.selected_proxy_features = cached_data['proxy_features']
 
     # Results from various application steps
-    st.session_state.twin_applicant_pairs = None # Result of construct_twin_pairs
-    st.session_state.violations_df = None # Result of detect_individual_violations
-    st.session_state.lipschitz_ratio_value = None # Result of lipschitz_fairness
-    st.session_state.sensitivity_df = None # Result of lipschitz_fairness
-    st.session_state.synthesis_report = None # Result of topic2_synthesis_report
+    st.session_state.twin_applicant_pairs = None
+    st.session_state.violations_df = None
+    st.session_state.lipschitz_ratio_value = None
+    st.session_state.sensitivity_df = None
+    st.session_state.synthesis_report = None
 
-    # Conceptual group fairness metrics (placeholders from source.py)
-    st.session_state.conceptual_group_metrics = conceptual_group_metrics
-    st.session_state.conceptual_mitigation_results = conceptual_mitigation_results
+    # Conceptual group fairness metrics
+    st.session_state.conceptual_group_metrics = cached_data['conceptual_group_metrics']
+    st.session_state.conceptual_mitigation_results = cached_data['conceptual_mitigation_results']
+
+# Store functions for easy access
+construct_twin_pairs = cached_data['functions']['construct_twin_pairs']
+detect_individual_violations = cached_data['functions']['detect_individual_violations']
+decompose_twin_difference = cached_data['functions']['decompose_twin_difference']
+lipschitz_fairness = cached_data['functions']['lipschitz_fairness']
+topic2_synthesis_report = cached_data['functions']['topic2_synthesis_report']
+AdversarialDebiaser = cached_data['functions']['AdversarialDebiaser']
 
 # Helper function to display plots and manage memory
+
+
 def display_plot(fig):
     st.pyplot(fig)
-    plt.close(fig) # Close the figure to free up memory
+    plt.close(fig)  # Close the figure to free up memory
+
 
 # --- Application Sidebar and Page Navigation ---
 st.sidebar.title("Navigation")
@@ -79,16 +151,21 @@ if st.session_state.current_page == "1. Introduction & Setup":
     """)
 
     st.subheader("Model and Data Overview")
-    st.markdown(f"The credit scoring model and dataset have been pre-loaded from `source.py`.")
+    st.markdown(
+        f"The credit scoring model and dataset have been pre-loaded from `source.py`.")
     st.markdown(f"**Model Type:** `xgboost.XGBClassifier`")
-    st.markdown(f"**Number of features:** `{len(st.session_state.feature_cols)}`")
-    st.markdown(f"**Number of test samples:** `{len(st.session_state.X_test)}`")
+    st.markdown(
+        f"**Number of features:** `{len(st.session_state.feature_cols)}`")
+    st.markdown(
+        f"**Number of test samples:** `{len(st.session_state.X_test)}`")
 
     st.markdown(f"**Financial Features (used by model):**")
-    st.dataframe(pd.DataFrame(st.session_state.financial_features, columns=['Feature Name']))
+    st.dataframe(pd.DataFrame(
+        st.session_state.financial_features, columns=['Feature Name']))
 
     st.markdown(f"**Proxy Features (used by model, can be varied for twins):**")
-    st.dataframe(pd.DataFrame(st.session_state.proxy_features_initial, columns=['Feature Name']))
+    st.dataframe(pd.DataFrame(
+        st.session_state.proxy_features_initial, columns=['Feature Name']))
 
     st.subheader("Configuration for Twin Generation")
     st.session_state.selected_proxy_features = st.multiselect(
@@ -114,7 +191,8 @@ elif st.session_state.current_page == "2. Construct Twin Applicants":
 
     if st.button("Construct Twin Applicants"):
         if not st.session_state.selected_proxy_features:
-            st.warning("Please select at least one proxy feature for twin generation in '1. Introduction & Setup'.")
+            st.warning(
+                "Please select at least one proxy feature for twin generation in '1. Introduction & Setup'.")
         else:
             with st.spinner("Constructing twin applicant pairs..."):
                 twin_applicant_pairs = construct_twin_pairs(
@@ -124,7 +202,8 @@ elif st.session_state.current_page == "2. Construct Twin Applicants":
                     n_pairs=st.session_state.n_audit_pairs
                 )
                 st.session_state.twin_applicant_pairs = twin_applicant_pairs
-            st.success(f"Constructed {len(twin_applicant_pairs)} twin applicant pairs.")
+            st.success(
+                f"Constructed {len(twin_applicant_pairs)} twin applicant pairs.")
 
             st.markdown(f"""
             After constructing `{st.session_state.n_audit_pairs}` twin applicants, I can see that the `{st.session_state.financial_features}` remain constant for both the original and twin applicants, while the `{st.session_state.selected_proxy_features}` have been modified. This deliberate perturbation allows us to isolate the model's sensitivity to these specific proxy features. The generated pairs are now ready to be fed into our credit scoring model to detect any differential treatment.
@@ -133,11 +212,13 @@ elif st.session_state.current_page == "2. Construct Twin Applicants":
             st.subheader("Sample Twin Pair Verification")
             if st.session_state.twin_applicant_pairs:
                 sample_pair = st.session_state.twin_applicant_pairs[0]
-                st.markdown(f"Original Applicant (Index `{sample_pair['original_idx']}`):")
+                st.markdown(
+                    f"Original Applicant (Index `{sample_pair['original_idx']}`):")
                 st.dataframe(sample_pair['original'].to_frame().T)
                 st.markdown(f"Twin Applicant:")
                 st.dataframe(sample_pair['twin'].to_frame().T)
-                st.markdown(f"Features intentionally changed for twin: `{', '.join(sample_pair['proxy_changed'])}`")
+                st.markdown(
+                    f"Features intentionally changed for twin: `{', '.join(sample_pair['proxy_changed'])}`")
             else:
                 st.info("No twin pairs constructed yet. Click the button above.")
 
@@ -150,12 +231,21 @@ elif st.session_state.current_page == "3. Detect Individual Violations":
     The **Individual Fairness Violation Rate** measures the proportion of twin pairs where the absolute difference in prediction probabilities exceeds a predefined materiality threshold $\epsilon$. The **Decision Flip Rate** is a more severe metric, indicating instances where the model's final binary decision (approve/deny) changes between identical twins.
     """)
 
-    st.markdown(r"**Individual Fairness Violation Rate ($VR_{\text{individual}}$):**")
-    st.markdown(r"$$VR_{\text{individual}} = \frac{{\|\{(x, x') : \|f(x) - f(x')\| > \epsilon, x \sim_{\text{financial}} x'\}\|}}{{\|\text{all twin pairs}\|}}$$")
+    st.markdown(
+        r"**Individual Fairness Violation Rate ($VR_{\text{individual}}$):**")
+    st.markdown(
+        r"""
+$$
+VR_{\text{individual}} = \frac{{\|\{(x, x') : \|f(x) - f(x')\| > \epsilon, x \sim_{\text{financial}} x'\}\|}}{{\|\text{all twin pairs}\|}}
+$$""")
     st.markdown(r"where $x$ and $x'$ are a twin pair of applicants; $x \sim_{\text{financial}} x'$ means $x$ and $x'$ have identical financial features but different proxy features; $f(x)$ and $f(x')$ are the model's predicted credit approval probabilities for $x$ and $x'$, respectively; $\epsilon$ is the materiality threshold for prediction difference (e.g., 0.10); and $|\cdot|$ denotes the count of elements in a set.")
 
     st.markdown(r"**Decision Flip Rate ($FR$):**")
-    st.markdown(r"$$FR = \frac{{\|\{(x, x') : \hat{y}(x) \neq \hat{y}(x')\}\|}}{{\|\text{all twin pairs}\|}}$$")
+    st.markdown(
+        r"""
+$$
+FR = \frac{{\|\{(x, x') : \hat{y}(x) \neq \hat{y}(x')\}\|}}{{\|\text{all twin pairs}\|}}
+$$""")
     st.markdown(r"where $\hat{y}(x)$ and $\hat{y}(x')$ are the model's binarized (e.g., using a 0.5 threshold) credit approval decisions for $x$ and $x'$, respectively; and $\hat{y}(x) \neq \hat{y}(x')$ indicates a decision flip.")
 
     st.markdown(f"""
@@ -163,7 +253,8 @@ elif st.session_state.current_page == "3. Detect Individual Violations":
     """)
 
     if st.session_state.twin_applicant_pairs is None:
-        st.warning("Please construct twin applicants first on the '2. Construct Twin Applicants' page.")
+        st.warning(
+            "Please construct twin applicants first on the '2. Construct Twin Applicants' page.")
     else:
         st.session_state.materiality_threshold = st.slider(
             "Set Materiality Threshold ($\\epsilon$) for Prediction Delta:",
@@ -183,18 +274,25 @@ elif st.session_state.current_page == "3. Detect Individual Violations":
 
             if st.session_state.violations_df is not None:
                 st.subheader("Summary of Individual Fairness Violations")
-                n_violations = st.session_state.violations_df['is_violation'].sum()
-                n_flipped = st.session_state.violations_df['decision_flipped'].sum()
+                n_violations = st.session_state.violations_df['is_violation'].sum(
+                )
+                n_flipped = st.session_state.violations_df['decision_flipped'].sum(
+                )
                 total_pairs = len(st.session_state.violations_df)
 
                 st.info(f"**Twin pairs tested:** `{total_pairs}`")
-                st.info(f"**Prediction delta > {st.session_state.materiality_threshold} (Violation Rate):** `{n_violations}` (`{n_violations / total_pairs:.1%}`)")
-                st.info(f"**Decision flipped (Decision Flip Rate):** `{n_flipped}` (`{n_flipped / total_pairs:.1%}`)")
-                st.info(f"**Mean prediction delta:** `{st.session_state.violations_df['delta'].mean():.4f}`")
-                st.info(f"**Max prediction delta:** `{st.session_state.violations_df['delta'].max():.4f}`")
+                st.info(
+                    f"**Prediction delta > {st.session_state.materiality_threshold} (Violation Rate):** `{n_violations}` (`{n_violations / total_pairs:.1%}`)")
+                st.info(
+                    f"**Decision flipped (Decision Flip Rate):** `{n_flipped}` (`{n_flipped / total_pairs:.1%}`)")
+                st.info(
+                    f"**Mean prediction delta:** `{st.session_state.violations_df['delta'].mean():.4f}`")
+                st.info(
+                    f"**Max prediction delta:** `{st.session_state.violations_df['delta'].max():.4f}`")
 
                 st.subheader("Worst Violations (Top 5 by delta):")
-                worst_violations = st.session_state.violations_df.nlargest(5, 'delta')
+                worst_violations = st.session_state.violations_df.nlargest(
+                    5, 'delta')
                 st.dataframe(worst_violations)
 
                 st.markdown(f"""
@@ -206,19 +304,27 @@ elif st.session_state.current_page == "3. Detect Individual Violations":
                 """)
 
                 # V2: Violation Rate Histogram
-                st.subheader("Visualization: Distribution of Prediction Deltas (V2)")
+                st.subheader(
+                    "Visualization: Distribution of Prediction Deltas (V2)")
                 fig, ax = plt.subplots(figsize=(10, 6))
-                sns.histplot(st.session_state.violations_df['delta'], bins=30, kde=True, color='skyblue', ax=ax)
-                ax.axvline(x=st.session_state.materiality_threshold, color='red', linestyle='--', label=f'Materiality Threshold ($\\epsilon={st.session_state.materiality_threshold:.2f}$)')
-                ax.axvspan(st.session_state.materiality_threshold, st.session_state.violations_df['delta'].max(), color='red', alpha=0.1, label='Individual Fairness Violations')
+                sns.histplot(
+                    st.session_state.violations_df['delta'], bins=30, kde=True, color='skyblue', ax=ax)
+                ax.axvline(x=st.session_state.materiality_threshold, color='red', linestyle='--',
+                           label=f'Materiality Threshold ($\\epsilon={st.session_state.materiality_threshold:.2f}$)')
+                ax.axvspan(st.session_state.materiality_threshold, st.session_state.violations_df['delta'].max(
+                ), color='red', alpha=0.1, label='Individual Fairness Violations')
 
-                decision_flip_deltas = st.session_state.violations_df[st.session_state.violations_df['decision_flipped']]['delta']
+                decision_flip_deltas = st.session_state.violations_df[
+                    st.session_state.violations_df['decision_flipped']]['delta']
                 if not decision_flip_deltas.empty:
                     min_flip_delta = decision_flip_deltas.min()
-                    ax.axvspan(min_flip_delta, st.session_state.violations_df['delta'].max(), color='purple', alpha=0.15, label='Decision Flip Region')
+                    ax.axvspan(min_flip_delta, st.session_state.violations_df['delta'].max(
+                    ), color='purple', alpha=0.15, label='Decision Flip Region')
 
-                ax.set_title('Distribution of Prediction Deltas Across Twin Pairs', fontsize=14)
-                ax.set_xlabel('Absolute Prediction Probability Difference ($\\Delta P$)', fontsize=12)
+                ax.set_title(
+                    'Distribution of Prediction Deltas Across Twin Pairs', fontsize=14)
+                ax.set_xlabel(
+                    'Absolute Prediction Probability Difference ($\\Delta P$)', fontsize=12)
                 ax.set_ylabel('Number of Twin Pairs', fontsize=12)
                 ax.legend()
                 ax.grid(axis='y', alpha=0.75)
@@ -228,7 +334,8 @@ elif st.session_state.current_page == "3. Detect Individual Violations":
                 The histogram visually reinforces the numerical findings. I can clearly see the distribution of prediction differences, how many fall above our materiality threshold ($\\epsilon={st.session_state.materiality_threshold:.2f}$), and identify the region where decision flips occurred. This visualization is crucial for presenting the audit findings to non-technical stakeholders and regulatory bodies at CreditGuard Financial, making the concept of individual unfairness tangible.
                 """)
             else:
-                st.info("No violations detected yet. Click the 'Detect Violations' button.")
+                st.info(
+                    "No violations detected yet. Click the 'Detect Violations' button.")
 
 # --- Page 4: Decompose Unfairness (SHAP) ---
 elif st.session_state.current_page == "4. Decompose Unfairness (SHAP)":
@@ -243,20 +350,25 @@ elif st.session_state.current_page == "4. Decompose Unfairness (SHAP)":
     """)
 
     if st.session_state.violations_df is None or st.session_state.twin_applicant_pairs is None:
-        st.warning("Please run '2. Construct Twin Applicants' and '3. Detect Individual Violations' first.")
+        st.warning(
+            "Please run '2. Construct Twin Applicants' and '3. Detect Individual Violations' first.")
     else:
         st.subheader("Twin Applicant Gallery (Top 5 Worst Violations) (V1)")
-        n_display_gallery = st.slider("Number of worst violations to display in gallery:", min_value=1, max_value=5, value=5)
+        n_display_gallery = st.slider(
+            "Number of worst violations to display in gallery:", min_value=1, max_value=5, value=5)
 
         if st.button("Generate Twin Applicant Gallery"):
-            st.markdown(f"<div style='border: 1px solid #ddd; padding: 15px; background-color: #f0f2f6;'><h3>Twin Applicant Gallery (Top {n_display_gallery} Worst Violations)</h3></div>", unsafe_allow_html=True)
+            st.markdown(
+                f"<div style='border: 1px solid #ddd; padding: 15px; background-color: #f0f2f6;'><h3>Twin Applicant Gallery (Top {n_display_gallery} Worst Violations)</h3></div>", unsafe_allow_html=True)
 
             with st.spinner("Generating gallery and SHAP explanations... This may take a moment."):
-                worst_violations = st.session_state.violations_df.nlargest(n_display_gallery, 'delta')
+                worst_violations = st.session_state.violations_df.nlargest(
+                    n_display_gallery, 'delta')
 
                 for i, (_, row) in enumerate(worst_violations.iterrows()):
                     original_idx = row['original_idx']
-                    pair = next(p for p in st.session_state.twin_applicant_pairs if p['original_idx'] == original_idx)
+                    pair = next(
+                        p for p in st.session_state.twin_applicant_pairs if p['original_idx'] == original_idx)
 
                     # Decompose difference for the pair
                     feature_impact, top_driver = decompose_twin_difference(
@@ -291,25 +403,35 @@ elif st.session_state.current_page == "4. Decompose Unfairness (SHAP)":
                     features_html += "</table>"
                     st.markdown(features_html, unsafe_allow_html=True)
 
-
                     # Generate SHAP waterfall plots for this specific pair
                     explainer = shap.TreeExplainer(st.session_state.model)
-                    orig_df_shap = pair['original'][st.session_state.feature_cols].to_frame().T
-                    twin_df_shap = pair['twin'][st.session_state.feature_cols].to_frame().T
+                    orig_df_shap = pair['original'][st.session_state.feature_cols].to_frame(
+                    ).T
+                    twin_df_shap = pair['twin'][st.session_state.feature_cols].to_frame(
+                    ).T
 
-                    original_shap_values = explainer.shap_values(orig_df_shap)[0]
+                    original_shap_values = explainer.shap_values(orig_df_shap)[
+                        0]
                     twin_shap_values = explainer.shap_values(twin_df_shap)[0]
                     expected_value = explainer.expected_value
 
-                    fig_shap, axes_shap = plt.subplots(1, 2, figsize=(18, 6))
+                    fig_shap, axes_shap = plt.subplots(2, 1, figsize=(18, 6))
 
-                    shap.waterfall_plot(shap.Explanation(values=original_shap_values, base_values=expected_value, data=orig_df_shap.iloc[0], feature_names=st.session_state.feature_cols), max_display=10, show=False, ax=axes_shap[0])
-                    axes_shap[0].set_title(f'Original Applicant {original_idx} SHAP (P={row["orig_prob"]:.3f})')
-                    axes_shap[0].set_xlabel('SHAP Value (impact on model output)')
+                    plt.sca(axes_shap[0])
+                    shap.waterfall_plot(shap.Explanation(values=original_shap_values, base_values=expected_value,
+                                        data=orig_df_shap.iloc[0], feature_names=st.session_state.feature_cols), max_display=10, show=False, )
+                    axes_shap[0].set_title(
+                        f'Original Applicant {original_idx} SHAP (P={row["orig_prob"]:.3f})')
+                    axes_shap[0].set_xlabel(
+                        'SHAP Value (impact on model output)')
 
-                    shap.waterfall_plot(shap.Explanation(values=twin_shap_values, base_values=expected_value, data=twin_df_shap.iloc[0], feature_names=st.session_state.feature_cols), max_display=10, show=False, ax=axes_shap[1])
-                    axes_shap[1].set_title(f'Twin Applicant SHAP (P={row["twin_prob"]:.3f})')
-                    axes_shap[1].set_xlabel('SHAP Value (impact on model output)')
+                    plt.sca(axes_shap[1])
+                    shap.waterfall_plot(shap.Explanation(values=twin_shap_values, base_values=expected_value,
+                                        data=twin_df_shap.iloc[0], feature_names=st.session_state.feature_cols), max_display=10, show=False, )
+                    axes_shap[1].set_title(
+                        f'Twin Applicant SHAP (P={row["twin_prob"]:.3f})')
+                    axes_shap[1].set_xlabel(
+                        'SHAP Value (impact on model output)')
 
                     plt.tight_layout()
                     st.markdown("##### SHAP Waterfall Plots")
@@ -322,36 +444,53 @@ elif st.session_state.current_page == "4. Decompose Unfairness (SHAP)":
         """)
 
         # V3: SHAP Waterfall Comparison for the single WORST violation pair
-        st.subheader("SHAP Waterfall Comparisons for the SINGLE WORST VIOLATION PAIR (V3)")
+        st.subheader(
+            "SHAP Waterfall Comparisons for the SINGLE WORST VIOLATION PAIR (V3)")
         if st.session_state.violations_df is not None and not st.session_state.violations_df.empty:
             if st.button("Display Single Worst SHAP Comparison"):
-                worst_pair_row = st.session_state.violations_df.nlargest(1, 'delta').iloc[0]
+                worst_pair_row = st.session_state.violations_df.nlargest(
+                    1, 'delta').iloc[0]
                 worst_original_idx = worst_pair_row['original_idx']
-                worst_pair_data = next(p for p in st.session_state.twin_applicant_pairs if p['original_idx'] == worst_original_idx)
+                worst_pair_data = next(
+                    p for p in st.session_state.twin_applicant_pairs if p['original_idx'] == worst_original_idx)
 
                 explainer = shap.TreeExplainer(st.session_state.model)
-                worst_orig_df = worst_pair_data['original'][st.session_state.feature_cols].to_frame().T
-                worst_twin_df = worst_pair_data['twin'][st.session_state.feature_cols].to_frame().T
+                worst_orig_df = worst_pair_data['original'][st.session_state.feature_cols].to_frame(
+                ).T
+                worst_twin_df = worst_pair_data['twin'][st.session_state.feature_cols].to_frame(
+                ).T
 
-                worst_original_shap_values = explainer.shap_values(worst_orig_df)[0]
-                worst_twin_shap_values = explainer.shap_values(worst_twin_df)[0]
+                worst_original_shap_values = explainer.shap_values(worst_orig_df)[
+                    0]
+                worst_twin_shap_values = explainer.shap_values(worst_twin_df)[
+                    0]
                 expected_value = explainer.expected_value
 
-                fig, axes = plt.subplots(1, 2, figsize=(20, 7))
+                fig, axes = plt.subplots(2, 1, figsize=(20, 7))
 
-                shap.waterfall_plot(shap.Explanation(values=worst_original_shap_values, base_values=expected_value, data=worst_orig_df.iloc[0], feature_names=st.session_state.feature_cols), max_display=10, show=False, ax=axes[0])
-                axes[0].set_title(f'Worst Original Applicant {worst_original_idx} SHAP (P={worst_pair_row["orig_prob"]:.3f})', fontsize=14)
-                axes[0].set_xlabel('SHAP Value (impact on model output)', fontsize=12)
+                plt.sca(axes[0])
+                shap.waterfall_plot(shap.Explanation(values=worst_original_shap_values, base_values=expected_value,
+                                    data=worst_orig_df.iloc[0], feature_names=st.session_state.feature_cols), max_display=10, show=False)
+                axes[0].set_title(
+                    f'Worst Original Applicant {worst_original_idx} SHAP (P={worst_pair_row["orig_prob"]:.3f})', fontsize=14)
+                axes[0].set_xlabel(
+                    'SHAP Value (impact on model output)', fontsize=12)
 
-                shap.waterfall_plot(shap.Explanation(values=worst_twin_shap_values, base_values=expected_value, data=worst_twin_df.iloc[0], feature_names=st.session_state.feature_cols), max_display=10, show=False, ax=axes[1])
-                axes[1].set_title(f'Twin Applicant SHAP (P={worst_pair_row["twin_prob"]:.3f})', fontsize=14)
-                axes[1].set_xlabel('SHAP Value (impact on model output)', fontsize=12)
+                plt.sca(axes[1])
+                shap.waterfall_plot(shap.Explanation(values=worst_twin_shap_values, base_values=expected_value,
+                                    data=worst_twin_df.iloc[0], feature_names=st.session_state.feature_cols), max_display=10, show=False,)
+                axes[1].set_title(
+                    f'Twin Applicant SHAP (P={worst_pair_row["twin_prob"]:.3f})', fontsize=14)
+                axes[1].set_xlabel(
+                    'SHAP Value (impact on model output)', fontsize=12)
 
                 plt.tight_layout()
-                plt.suptitle(f'SHAP Waterfall Comparison for Worst Violation Pair {worst_original_idx}', fontsize=16, y=1.02)
+                plt.suptitle(
+                    f'SHAP Waterfall Comparison for Worst Violation Pair {worst_original_idx}', fontsize=16, y=1.02)
                 display_plot(fig)
             else:
-                st.info("Click the button above to display the SHAP Waterfall Comparison for the single worst violation.")
+                st.info(
+                    "Click the button above to display the SHAP Waterfall Comparison for the single worst violation.")
 
 # --- Page 5: Measure Model Sensitivity (Lipschitz) ---
 elif st.session_state.current_page == "5. Measure Model Sensitivity (Lipschitz)":
@@ -362,20 +501,32 @@ elif st.session_state.current_page == "5. Measure Model Sensitivity (Lipschitz)"
     The practical metric we use is the **Proxy/Financial Sensitivity Ratio (R)**. This ratio compares the model's average prediction sensitivity to changes in proxy features versus changes in legitimate financial features.
     """)
 
-    st.markdown(r"**Mathematical Formulation for Lipschitz Individual Fairness:**")
-    st.markdown(r"A model $f$ satisfies $(\epsilon, \delta)$-individual fairness if:")
-    st.markdown(r"$$d_y(f(x_1), f(x_2)) \le L \cdot d_x(x_1, x_2)$$")
+    st.markdown(
+        r"**Mathematical Formulation for Lipschitz Individual Fairness:**")
+    st.markdown(
+        r"A model $f$ satisfies $(\epsilon, \delta)$-individual fairness if:")
+    st.markdown(r"""
+$$
+d_y(f(x_1), f(x_2)) \le L \cdot d_x(x_1, x_2)
+$$""")
     st.markdown(r"where $d_x(x_1, x_2)$ is a distance metric on input features (e.g., Euclidean distance); $d_y(f(x_1), f(x_2))$ is the prediction distance (e.g., absolute difference in probabilities); and $L$ is the Lipschitz constant, representing the maximum rate of change in output for a unit change in input.")
     st.markdown(f"Financial Interpretation: For two applicants with similar credit profiles ($d_x$ small on financial features), the model's predictions should also be similar ($d_y$ small). If the prediction changes dramatically when only a proxy feature changes, the Lipschitz constant with respect to proxy features is high, indicating individual unfairness.")
 
-    st.markdown(r"The **Proxy/Financial Sensitivity Ratio (R)** is our practical metric:")
-    st.markdown(r"$$R = \frac{{S_{\text{proxy}}}}{{S_{\text{financial}}}}$$")
+    st.markdown(
+        r"The **Proxy/Financial Sensitivity Ratio (R)** is our practical metric:")
+    st.markdown(r"""
+$$
+R = \frac{{S_{\text{proxy}}}}{{S_{\text{financial}}}}
+$$""")
     st.markdown(r"where $S_{\text{proxy}}$ is the average prediction sensitivity to small perturbations in proxy features; and $S_{\text{financial}}$ is the average prediction sensitivity to small perturbations in financial features.")
 
     st.markdown(f"**Interpretation:**")
-    st.markdown(f"-   `R < 0.5`: Good. Model is much more sensitive to financial features than proxies.")
-    st.markdown(f"-   `0.5 <= R < 1.0`: Warning. Proxy sensitivity is comparable.")
-    st.markdown(f"-   `R >= 1.0`: Fail. Model is more sensitive to proxies than to legitimate credit factors.")
+    st.markdown(
+        f"-   `R < 0.5`: Good. Model is much more sensitive to financial features than proxies.")
+    st.markdown(
+        f"-   `0.5 <= R < 1.0`: Warning. Proxy sensitivity is comparable.")
+    st.markdown(
+        f"-   `R >= 1.0`: Fail. Model is more sensitive to proxies than to legitimate credit factors.")
 
     st.markdown(f"""
     This analysis helps CreditGuard Financial understand if the model relies too heavily on proxy features even when minor variations occur, indicating a structural susceptibility to individual bias.
@@ -395,16 +546,22 @@ elif st.session_state.current_page == "5. Measure Model Sensitivity (Lipschitz)"
 
         if st.session_state.lipschitz_ratio_value is not None:
             st.subheader("Lipschitz Fairness Analysis Results")
-            st.info(f"**Avg sensitivity to proxy features:** `{st.session_state.sensitivity_df[st.session_state.sensitivity_df['is_proxy']]['sensitivity'].mean():.4f}`")
-            st.info(f"**Avg sensitivity to financial features:** `{st.session_state.sensitivity_df[~st.session_state.sensitivity_df['is_proxy']]['sensitivity'].mean():.4f}`")
-            st.info(f"**Proxy/Financial sensitivity ratio (R):** `{st.session_state.lipschitz_ratio_value:.3f}`")
+            st.info(
+                f"**Avg sensitivity to proxy features:** `{st.session_state.sensitivity_df[st.session_state.sensitivity_df['is_proxy']]['sensitivity'].mean():.4f}`")
+            st.info(
+                f"**Avg sensitivity to financial features:** `{st.session_state.sensitivity_df[~st.session_state.sensitivity_df['is_proxy']]['sensitivity'].mean():.4f}`")
+            st.info(
+                f"**Proxy/Financial sensitivity ratio (R):** `{st.session_state.lipschitz_ratio_value:.3f}`")
 
             if st.session_state.lipschitz_ratio_value < 0.5:
-                st.success("PASS: Model is much more sensitive to financial features than proxies (R < 0.5).")
+                st.success(
+                    "PASS: Model is much more sensitive to financial features than proxies (R < 0.5).")
             elif st.session_state.lipschitz_ratio_value < 1.0:
-                st.warning("WARNING: Proxy sensitivity is comparable to financial sensitivity (0.5 <= R < 1.0). Requires attention.")
+                st.warning(
+                    "WARNING: Proxy sensitivity is comparable to financial sensitivity (0.5 <= R < 1.0). Requires attention.")
             else:
-                st.error("FAIL: Model is MORE sensitive to proxies than financials (R >= 1.0). Requires urgent intervention.")
+                st.error(
+                    "FAIL: Model is MORE sensitive to proxies than financials (R >= 1.0). Requires urgent intervention.")
 
             st.markdown(f"""
             **Output Explanation and Real-World Impact:**
@@ -421,10 +578,13 @@ elif st.session_state.current_page == "5. Measure Model Sensitivity (Lipschitz)"
             st.subheader("Visualization: Lipschitz Sensitivity Bar Chart (V4)")
             fig, ax = plt.subplots(figsize=(12, 7))
             sns.barplot(x='sensitivity', y='feature', data=st.session_state.sensitivity_df.sort_values('sensitivity', ascending=False),
-                        palette=['red' if f in st.session_state.selected_proxy_features else 'blue' for f in st.session_state.sensitivity_df.sort_values('sensitivity', ascending=False)['feature']],
+                        palette=['red' if f in st.session_state.selected_proxy_features else 'blue' for f in st.session_state.sensitivity_df.sort_values(
+                            'sensitivity', ascending=False)['feature']],
                         ax=ax)
-            ax.set_title('Feature Sensitivity to Prediction Changes (Lipschitz Analysis)', fontsize=14)
-            ax.set_xlabel('Average Prediction Sensitivity (per unit feature change)', fontsize=12)
+            ax.set_title(
+                'Feature Sensitivity to Prediction Changes (Lipschitz Analysis)', fontsize=14)
+            ax.set_xlabel(
+                'Average Prediction Sensitivity (per unit feature change)', fontsize=12)
             ax.set_ylabel('Feature', fontsize=12)
             ax.grid(axis='x', alpha=0.75)
             ax.legend(handles=[plt.Line2D([0], [0], color='red', lw=4, label='Proxy Feature'),
@@ -436,11 +596,13 @@ elif st.session_state.current_page == "5. Measure Model Sensitivity (Lipschitz)"
             The Lipschitz Sensitivity Bar Chart clearly ranks features by their influence on prediction changes. By color-coding proxy features (red) and financial features (blue), I can visually identify if proxy features exhibit unexpectedly high sensitivity. This visualization makes it easy to communicate complex fairness insights to CreditGuard Financial's executive team and model developers, highlighting which features, if perturbed slightly, would cause the largest shifts in credit decisions.
             """)
         else:
-            st.info("No Lipschitz fairness results yet. Click the 'Measure Lipschitz Fairness' button.")
+            st.info(
+                "No Lipschitz fairness results yet. Click the 'Measure Lipschitz Fairness' button.")
 
 # --- Page 6: Adversarial Debiasing (Conceptual) ---
 elif st.session_state.current_page == "6. Adversarial Debiasing (Conceptual)":
-    st.header("6. Conceptual Understanding of Adversarial Debiasing (Mitigation Strategy)")
+    st.header(
+        "6. Conceptual Understanding of Adversarial Debiasing (Mitigation Strategy)")
     st.markdown(f"""
     While our audit focuses on *detecting* and *verifying* individual fairness, it's essential for me as a Risk Manager to also understand *mitigation* strategies. **Adversarial Debiasing** is a powerful, albeit complex, technique for mitigating bias directly during model training. It aims to build a model whose internal representations do not encode information about protected attributes, even indirectly through proxy features.
 
@@ -453,38 +615,68 @@ elif st.session_state.current_page == "6. Adversarial Debiasing (Conceptual)":
 
     st.markdown(r"**Mathematical Concept: Gradient Reversal Layer**")
     st.markdown(r"The gradient reversal layer (GRL) is a crucial component in adversarial debiasing. During the forward pass, it acts as an identity function, simply passing its input unchanged:")
-    st.markdown(r"$$f_{\text{GRL}}(x) = x$$")
+    st.markdown(r"""
+$$
+f_{\text{GRL}}(x) = x
+$$""")
     st.markdown(r"However, during the backward pass (gradient calculation), it multiplies the gradient by a negative constant $\lambda$:")
-    st.markdown(r"$$\frac{{\partial L}}{{\partial x}} = -\lambda \frac{{\partial L}}{{\partial f_{\text{GRL}}(x)}}$$")
+    st.markdown(
+        r"""
+$$
+\frac{{\partial L}}{{\partial x}} = -\lambda \frac{{\partial L}}{{\partial f_{\text{GRL}}(x)}}
+$$""")
     st.markdown(r"This effectively reverses the direction of the gradient flow for the adversary's loss, making the feature extractor (encoder) learn features that confuse the adversary while still being useful for the main predictor.")
 
     st.markdown(f"""
     This conceptual understanding is vital for CreditGuard Financial to consider advanced bias mitigation techniques for future model development, especially when high individual fairness is a critical requirement.
     """)
 
-    st.subheader("Adversarial Debiasing Architecture Diagram (V6)")
-    st.markdown(f"""
-    <div style="border: 1px solid #ddd; padding: 15px; margin-bottom: 20px;">
-        <p style="font-size: 1.1em; font-weight: bold;">Conceptual Adversarial Debiasing Architecture</p>
-        <p>This diagram illustrates the conceptual architecture for adversarial debiasing. The goal is for the 'Encoder' to learn representations that are useful for the 'Predictor' BUT simultaneously 'fool' the 'Adversary' into not being able to predict the protected attribute.</p>
-        <pre><code>
-Encoder (Feature Extractor) -> ( Predictor (Credit Default) ↑ , Adversary (Protected Attribute) ↓ )
-                          ^                                                        |
-                          |----- Gradient Reversal Layer ---------------------------|
-                          |
-                     Input Features
-        </code></pre>
-        <p>Adversarial debiasing trains two competing objectives:</p>
-        <ul>
-            <li>Predictor: minimize credit default prediction error</li>
-            <li>Adversary: predict protected attribute from representation</li>
-            <li>Encoder: fool the adversary while keeping predictor accurate</li>
-        </ul>
-        <p>If the adversary CANNOT predict group membership from the learned representation, the model cannot discriminate with respect to that attribute.</p>
-    </div>
-    """, unsafe_allow_html=True)
+    st.subheader("Conceptual Adversarial Debiasing Architecture")
+    st.write("""
+    This diagram illustrates the conceptual architecture for adversarial debiasing. 
+    The goal is for the **Encoder** to learn representations that are useful for the 
+    **Predictor** while simultaneously "fooling" the **Adversary**.
+    """)
 
-    st.markdown(f"Conceptual `AdversarialDebiaser` model instantiated with `{len(st.session_state.feature_cols)}` features and `64` hidden dimension.")
+    # Mermaid Diagram Definition
+    mermaid_code = """
+    graph TD
+        %% Nodes
+        In[Input Features]
+        Enc[Encoder <br/><i>Feature Extractor</i>]
+        Pred[Predictor <br/><i>Credit Default</i>]
+        Adv[Adversary <br/><i>Protected Attribute</i>]
+        GRL{Gradient Reversal <br/> Layer}
+
+        %% Flow
+        In --> Enc
+        Enc --> Pred
+        Enc --> Adv
+        
+        %% Feedback Loop
+        Adv -.-> GRL
+        GRL -.->|Flip Gradients| Enc
+
+        %% Styling
+        style Pred fill:#d4edda,stroke:#28a745
+        style Adv fill:#f8d7da,stroke:#dc3545
+        style GRL fill:#fff3cd,stroke:#ffc107,stroke-dasharray: 5 5
+        style Enc fill:#e2e3e5,stroke:#383d41
+    """
+
+    # Displaying the diagram
+    # Note: Ensure you have a mermaid-supporting component or use st.markdown with a mermaid script
+    stmd.st_mermaid(mermaid_code)
+
+    st.info("""
+    **Training Objectives:**
+    * **Predictor:** Minimize credit default prediction error.
+    * **Adversary:** Maximize its ability to predict the protected attribute.
+    * **Encoder:** Minimize predictor loss while **maximizing** adversary loss (via the GRL).
+    """)
+
+    st.markdown(
+        f"Conceptual `AdversarialDebiaser` model instantiated with `{len(st.session_state.feature_cols)}` features and `64` hidden dimension.")
     st.markdown(f"Model Architecture:")
     # Using st.code to display the architecture string from the class.
     st.code(str(AdversarialDebiaser(len(st.session_state.feature_cols))))
@@ -512,7 +704,8 @@ elif st.session_state.current_page == "7. Synthesize Fairness Audit Findings":
     """)
 
     if st.session_state.violations_df is None or st.session_state.lipschitz_ratio_value is None:
-        st.warning("Please complete '3. Detect Individual Violations' and '5. Measure Model Sensitivity (Lipschitz)' first.")
+        st.warning(
+            "Please complete '3. Detect Individual Violations' and '5. Measure Model Sensitivity (Lipschitz)' first.")
     else:
         if st.button("Generate Synthesis Report"):
             with st.spinner("Compiling comprehensive fairness audit report..."):
@@ -526,75 +719,104 @@ elif st.session_state.current_page == "7. Synthesize Fairness Audit Findings":
             st.success("Synthesis report generated!")
 
             if st.session_state.synthesis_report is not None:
-                st.subheader("Comprehensive AI Fairness Assessment")
-                
-                for key, value in st.session_state.synthesis_report.items():
-                    if isinstance(value, dict):
-                        st.markdown(f"#### {key.replace('_', ' ').title()}")
-                        for sub_key, sub_value in value.items():
-                            st.markdown(f"  **{sub_key.replace('_', ' ').title()}:** `{sub_value}`")
-                    elif isinstance(value, list):
-                        st.markdown(f"#### {key.replace('_', ' ').title()}")
-                        for item in value:
-                            st.markdown(f"- `{item}`")
-                    else:
-                        st.markdown(f"**{key.replace('_', ' ').title()}:** `{value}`")
+                with st.container(border=True):
+                    st.subheader("Comprehensive AI Fairness Assessment")
 
-                st.markdown(f"""
-                **Output Explanation and Real-World Impact:**
+                    for key, value in st.session_state.synthesis_report.items():
+                        if isinstance(value, dict):
+                            st.markdown(
+                                f"#### {key.replace('_', ' ').title()}")
+                            for sub_key, sub_value in value.items():
+                                st.markdown(
+                                    f"  **{sub_key.replace('_', ' ').title()}:** `{sub_value}`")
+                        elif isinstance(value, list):
+                            st.markdown(
+                                f"#### {key.replace('_', ' ').title()}")
+                            for item in value:
+                                st.markdown(f"- `{item}`")
+                        else:
+                            st.markdown(
+                                f"**{key.replace('_', ' ').title()}:** `{value}`")
 
-                The `COMPREHENSIVE AI FAIRNESS ASSESSMENT` provides a dashboard for CreditGuard Financial to quickly grasp the model's fairness profile. It integrates findings from group-level analysis (conceptualized as D4-T2-C1 and D4-T2-C2) with the individual-level audit conducted in this notebook.
+                    st.markdown(f"""
+                    **Output Explanation and Real-World Impact:**
 
-                The report clearly states the `Decision Flip Rate` and `Lipschitz Ratio`, along with an `individual_fairness_assessment`. If the `overall_assessment` is "REQUIRES FURTHER MITIGATION", it immediately signals to the executive team that despite passing group-level tests, the model exhibits concerning individual-level biases. The `remaining_actions` section then provides concrete, actionable steps for CreditGuard Financial's compliance and development teams. This synthesis is the ultimate deliverable, guiding strategic decisions on responsible AI and demonstrating our commitment to fair dealing in accordance with CFA Standard III(B).
-                """)
+                    The `COMPREHENSIVE AI FAIRNESS ASSESSMENT` provides a dashboard for CreditGuard Financial to quickly grasp the model's fairness profile. It integrates findings from group-level analysis (conceptualized as D4-T2-C1 and D4-T2-C2) with the individual-level audit conducted in this notebook.
 
-                # V5: Topic 2 Synthesis Dashboard
-                st.subheader("Visualization: Topic 2 Synthesis Dashboard (V5)")
-                fig = plt.figure(figsize=(14, 8))
-                gs = plt.GridSpec(3, 2, height_ratios=[1, 1, 1])
+                    The report clearly states the `Decision Flip Rate` and `Lipschitz Ratio`, along with an `individual_fairness_assessment`. If the `overall_assessment` is "REQUIRES FURTHER MITIGATION", it immediately signals to the executive team that despite passing group-level tests, the model exhibits concerning individual-level biases. The `remaining_actions` section then provides concrete, actionable steps for CreditGuard Financial's compliance and development teams. This synthesis is the ultimate deliverable, guiding strategic decisions on responsible AI and demonstrating our commitment to fair dealing in accordance with CFA Standard III(B).
+                    """)
 
-                # Phase 1: Group Detection Summary
-                ax0 = plt.subplot(gs[0, 0])
-                ax0.text(0.5, 0.7, f"Phase 1: Group Detection (D4-T2-C1)", ha='center', va='center', fontsize=14, weight='bold')
-                ax0.text(0.5, 0.4, f"DIR: {st.session_state.conceptual_group_metrics['dir']:.3f} ({'PASS' if st.session_state.conceptual_group_metrics['four_fifths_rule_pass'] else 'FAIL'})", ha='center', va='center', fontsize=12)
-                ax0.text(0.5, 0.1, f"Proxies Detected: {st.session_state.conceptual_group_metrics['proxies_detected']}", ha='center', va='center', fontsize=12)
-                ax0.set_title('Group Fairness Detection', fontsize=16, pad=15)
-                ax0.axis('off')
+                    # V5: Topic 2 Synthesis Dashboard
+                    st.subheader(
+                        "Visualization: Topic 2 Synthesis Dashboard (V5)")
+                    fig = plt.figure(figsize=(14, 8))
+                    gs = plt.GridSpec(3, 2, height_ratios=[1, 1, 1])
 
-                # Phase 2: Group Mitigation Summary
-                ax1 = plt.subplot(gs[0, 1])
-                ax1.text(0.5, 0.7, f"Phase 2: Group Mitigation (D4-T2-C2)", ha='center', va='center', fontsize=14, weight='bold')
-                ax1.text(0.5, 0.4, f"Strategy: {st.session_state.conceptual_mitigation_results['strategy_applied']}", ha='center', va='center', fontsize=12)
-                ax1.text(0.5, 0.1, f"Post-Mitigation DIR: {st.session_state.conceptual_mitigation_results['post_mitigation_dir']:.3f} | AUC Cost: {st.session_state.conceptual_mitigation_results['auc_cost']:.2%}", ha='center', va='center', fontsize=12)
-                ax1.set_title('Group Fairness Mitigation (Conceptual)', fontsize=16, pad=15)
-                ax1.axis('off')
+                    # Phase 1: Group Detection Summary
+                    ax0 = plt.subplot(gs[0, 0])
+                    ax0.text(0.5, 0.7, f"Phase 1: Group Detection (D4-T2-C1)",
+                             ha='center', va='center', fontsize=14, weight='bold')
+                    ax0.text(
+                        0.5, 0.4, f"DIR: {st.session_state.conceptual_group_metrics['dir']:.3f} ({'PASS' if st.session_state.conceptual_group_metrics['four_fifths_rule_pass'] else 'FAIL'})", ha='center', va='center', fontsize=12)
+                    ax0.text(
+                        0.5, 0.1, f"Proxies Detected: {st.session_state.conceptual_group_metrics['proxies_detected']}", ha='center', va='center', fontsize=12)
+                    ax0.set_title('Group Fairness Detection',
+                                  fontsize=16, pad=15)
+                    ax0.axis('off')
 
-                # Phase 3: Individual Verification Summary
-                ax2 = plt.subplot(gs[1, :])
-                ax2.text(0.5, 0.85, f"Phase 3: Individual Verification (D4-T2-C3)", ha='center', va='center', fontsize=14, weight='bold')
-                ax2.text(0.2, 0.6, f"Twin Pairs Tested: {len(st.session_state.violations_df)}", ha='center', va='center', fontsize=12)
-                ax2.text(0.8, 0.6, f"Decision Flips: {st.session_state.violations_df['decision_flipped'].sum()} ({st.session_state.violations_df['decision_flipped'].mean():.1%})", ha='center', va='center', fontsize=12)
-                ax2.text(0.2, 0.35, f"Materiality Violations: {st.session_state.violations_df['is_violation'].sum()} ({st.session_state.violations_df['is_violation'].mean():.1%})", ha='center', va='center', fontsize=12)
-                ax2.text(0.8, 0.35, f"Lipschitz Ratio (R): {st.session_state.lipschitz_ratio_value:.3f}", ha='center', va='center', fontsize=12)
-                ax2.text(0.5, 0.1, f"Individual Fairness: {synthesis_report['phase_3_individual_verification']['individual_fairness_assessment']}", ha='center', va='center', fontsize=14, color='red' if synthesis_report['phase_3_individual_verification']['individual_fairness_assessment'] != "INDIVIDUALLY FAIR" else 'green', weight='bold')
-                ax2.set_title('Individual Fairness Verification', fontsize=16, pad=15)
-                ax2.axis('off')
+                    # Phase 2: Group Mitigation Summary
+                    ax1 = plt.subplot(gs[0, 1])
+                    ax1.text(0.5, 0.7, f"Phase 2: Group Mitigation (D4-T2-C2)",
+                             ha='center', va='center', fontsize=14, weight='bold')
+                    ax1.text(
+                        0.5, 0.4, f"Strategy: {st.session_state.conceptual_mitigation_results['strategy_applied']}", ha='center', va='center', fontsize=12)
+                    ax1.text(
+                        0.5, 0.1, f"Post-Mitigation DIR: {st.session_state.conceptual_mitigation_results['post_mitigation_dir']:.3f} | AUC Cost: {st.session_state.conceptual_mitigation_results['auc_cost']:.2%}", ha='center', va='center', fontsize=12)
+                    ax1.set_title(
+                        'Group Fairness Mitigation (Conceptual)', fontsize=16, pad=15)
+                    ax1.axis('off')
 
-                # Overall Assessment and Key Actions
-                ax3 = plt.subplot(gs[2, :])
-                overall_status_color = 'red' if 'REQUIRES FURTHER MITIGATION' in synthesis_report['overall_assessment'] else 'green'
-                ax3.text(0.5, 0.8, f"Overall Assessment: {synthesis_report['overall_assessment']}", ha='center', va='center', fontsize=18, color=overall_status_color, weight='bold')
-                actions_text = "\n".join([f"- {action}" for action in synthesis_report['remaining_actions']])
-                ax3.text(0.05, 0.5, "Key Remaining Actions:", ha='left', va='top', fontsize=14, weight='bold')
-                ax3.text(0.05, 0.05, actions_text, ha='left', va='top', fontsize=12)
-                ax3.set_title('Comprehensive Fairness Status', fontsize=16, pad=15)
-                ax3.axis('off')
+                    # Phase 3: Individual Verification Summary
+                    ax2 = plt.subplot(gs[1, :])
+                    ax2.text(0.5, 0.85, f"Phase 3: Individual Verification (D4-T2-C3)",
+                             ha='center', va='center', fontsize=14, weight='bold')
+                    ax2.text(
+                        0.2, 0.6, f"Twin Pairs Tested: {len(st.session_state.violations_df)}", ha='center', va='center', fontsize=12)
+                    ax2.text(
+                        0.8, 0.6, f"Decision Flips: {st.session_state.violations_df['decision_flipped'].sum()} ({st.session_state.violations_df['decision_flipped'].mean():.1%})", ha='center', va='center', fontsize=12)
+                    ax2.text(
+                        0.2, 0.35, f"Materiality Violations: {st.session_state.violations_df['is_violation'].sum()} ({st.session_state.violations_df['is_violation'].mean():.1%})", ha='center', va='center', fontsize=12)
+                    ax2.text(
+                        0.8, 0.35, f"Lipschitz Ratio (R): {st.session_state.lipschitz_ratio_value:.3f}", ha='center', va='center', fontsize=12)
+                    ax2.text(0.5, 0.1, f"Individual Fairness: {synthesis_report['phase_3_individual_verification']['individual_fairness_assessment']}", ha='center', va='center',
+                             fontsize=14, color='red' if synthesis_report['phase_3_individual_verification']['individual_fairness_assessment'] != "INDIVIDUALLY FAIR" else 'green', weight='bold')
+                    ax2.set_title('Individual Fairness Verification',
+                                  fontsize=16, pad=15)
+                    ax2.axis('off')
 
-                plt.tight_layout(rect=[0, 0.03, 1, 0.95])
-                plt.suptitle('Topic 2: Comprehensive AI Fairness Audit Dashboard', fontsize=20, weight='bold', y=1.0)
-                display_plot(fig)
+                    # Overall Assessment and Key Actions
+                    ax3 = plt.subplot(gs[2, :])
+                    overall_status_color = 'red' if 'REQUIRES FURTHER MITIGATION' in synthesis_report[
+                        'overall_assessment'] else 'green'
+                    ax3.text(0.5, 0.8, f"Overall Assessment: {synthesis_report['overall_assessment']}",
+                             ha='center', va='center', fontsize=18, color=overall_status_color, weight='bold')
+                    actions_text = "\n".join(
+                        [f"- {action}" for action in synthesis_report['remaining_actions']])
+                    ax3.text(0.05, 0.5, "Key Remaining Actions:",
+                             ha='left', va='top', fontsize=14, weight='bold')
+                    ax3.text(0.05, 0.05, actions_text,
+                             ha='left', va='top', fontsize=12)
+                    ax3.set_title('Comprehensive Fairness Status',
+                                  fontsize=16, pad=15)
+                    ax3.axis('off')
+
+                    plt.tight_layout(rect=[0, 0.03, 1, 0.95])
+                    plt.suptitle('Topic 2: Comprehensive AI Fairness Audit Dashboard',
+                                 fontsize=20, weight='bold', y=1.0)
+                    display_plot(fig)
             else:
-                st.info("No synthesis report generated yet. Click the 'Generate Synthesis Report' button.")
+                st.info(
+                    "No synthesis report generated yet. Click the 'Generate Synthesis Report' button.")
 
 
 # License
